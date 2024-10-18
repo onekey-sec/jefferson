@@ -12,6 +12,7 @@ import cstruct
 from lzallright import LZOCompressor as lzo
 
 import jefferson.compression.jffs2_lzma as jffs2_lzma
+import jefferson.compression.jffs2_lzma_0x15 as jffs2_lzma_0x15
 import jefferson.compression.rtime as rtime
 
 
@@ -30,6 +31,7 @@ JFFS2_COMPR_DYNRUBIN = 0x05
 JFFS2_COMPR_ZLIB = 0x06
 JFFS2_COMPR_LZO = 0x07
 JFFS2_COMPR_LZMA = 0x08
+JFFS2_COMPR_0x15_LZMA = 0x15
 
 # /* Compatibility flags. */
 JFFS2_COMPAT_MASK = 0xC000  # /* What do to if an unknown nodetype is found */
@@ -181,6 +183,8 @@ class Jffs2_raw_inode(cstruct.CStruct):
                 self.data = jffs2_lzma.decompress(node_data, self.dsize)
             elif self.compr == JFFS2_COMPR_LZO:
                 self.data = lzo.decompress(node_data)
+            elif self.compr == JFFS2_COMPR_0x15_LZMA:
+                self.data = jffs2_lzma_0x15.decompress(node_data, self.dsize)
             else:
                 print("compression not implemented", self)
                 print(node_data.hex()[:20])
