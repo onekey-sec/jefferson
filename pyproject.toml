@@ -13,7 +13,9 @@ packages = [
 python = ">=3.9"
 cstruct = ">=5.2"
 click = "^8.1.3"
-lzallright = "^0.2.1"
+# TODO: uncomment when new release comes
+# lzallright = "^0.2.1"
+lzallright = { git = "https://github.com/clin1234/lzallright" }
 
 [build-system]
 requires = ["poetry-core"]
