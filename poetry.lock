@@ -26,18 +26,18 @@ files = [
 ]
 
 [[package]]
-name = "cstruct"
-version = "6.1"
-description = "C-style structs for Python"
+name = "dissect-cstruct"
+version = "4.7"
+description = "A Dissect module implementing a parser for C-like structures: structure parsing in Python made easy"
 optional = false
-python-versions = ">=3.6"
+python-versions = ">=3.10"
 files = [
-    {file = "cstruct-6.1-py2.py3-none-any.whl", hash = "sha256:8f607cc9ebd704c42a55d1ed54deb3af7fd4fa381e8cb3151c18ea124c4e83d1"},
-    {file = "cstruct-6.1.tar.gz", hash = "sha256:1e7af7b52c8dd3a6ad66df7e481150e4e273ec508950b4a0051e116375b7f28a"},
+    {file = "dissect_cstruct-4.7-py3-none-any.whl", hash = "sha256:0427621ce67baa3106df2dc63a320d0a7f5c2da88ba3faf2ef5886a1a6b458fd"},
+    {file = "dissect_cstruct-4.7.tar.gz", hash = "sha256:4bf821a381312b9b2fdefea307f7e33548158d39d7d154f1b3007472c51a1fc4"},
 ]
 
 [package.extras]
-test = ["pytest"]
+dev = ["typing_extensions"]
 
 [[package]]
 name = "lzallright"
@@ -68,4 +68,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10"
-content-hash = "998cb150b2e4f9d5cbd05bcd27dfae265d51a2f8e9acfb0ea7f3972addd8e6ed"
+content-hash = "4d1f27ef233fb780e3d34a08edcdbe25ed490bb25b118093daba1baa6e1d255a"

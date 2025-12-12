@@ -8,7 +8,7 @@ import sys
 import zlib
 from pathlib import Path
 
-import cstruct
+from dissect import cstruct
 from lzallright import LZOCompressor as lzo
 
 import jefferson.compression.jffs2_lzma as jffs2_lzma
@@ -53,6 +53,63 @@ JFFS2_NODETYPE_SUMMARY = JFFS2_FEATURE_RWCOMPAT_DELETE | JFFS2_NODE_ACCURATE | 6
 JFFS2_NODETYPE_XATTR = JFFS2_FEATURE_INCOMPAT | JFFS2_NODE_ACCURATE | 8
 JFFS2_NODETYPE_XREF = JFFS2_FEATURE_INCOMPAT | JFFS2_NODE_ACCURATE | 9
 
+CSTRUCT_DEFINITIONS = """
+struct Jffs2_unknown_node {
+    uint16 magic;
+    uint16 nodetype;
+    uint32 totlen;
+    uint32 hdr_crc;
+};
+
+struct Jffs2_raw_dirent {
+    uint16 magic;
+    uint16 nodetype;
+    uint32 totlen;
+    uint32 hdr_crc;
+    uint32 pino;
+    uint32 version;
+    uint32 ino;
+    uint32 mctime;
+    uint8 nsize;
+    uint8 type;
+    uint8 unused[2];
+    uint32 node_crc;
+    uint32 name_crc;
+};
+
+struct Jffs2_raw_inode {
+    uint16 magic;
+    uint16 nodetype;
+    uint32 totlen;
+    uint32 hdr_crc;
+    uint32 ino;
+    uint32 version;
+    uint32 mode;
+    uint16 uid;
+    uint16 gid;
+    uint32 isize;
+    uint32 atime;
+    uint32 mtime;
+    uint32 ctime;
+    uint32 offset;
+    uint32 csize;
+    uint32 dsize;
+    uint8 compr;
+    uint8 usercompr;
+    uint16 flags;
+    uint32 data_crc;
+    uint32 node_crc;
+};
+
+struct Jffs2_device_node_old {
+    uint16 old_id;
+};
+
+struct Jffs2_device_node_new {
+    uint32 new_id;
+};
+"""
+
 
 def mtd_crc(data):
     return (binascii.crc32(data, -1) ^ -1) & 0xFFFFFFFF
@@ -63,221 +120,111 @@ def is_safe_path(basedir, real_path):
     return basedir == os.path.commonpath((basedir, real_path))
 
 
-cstruct.typedef("uint8", "uint8_t")
-cstruct.typedef("uint16", "jint16_t")
-cstruct.typedef("uint32", "jint32_t")
-cstruct.typedef("uint32", "jmode_t")
-
-
-class Jffs2_unknown_node(cstruct.CStruct):
-    __byte_order__ = cstruct.LITTLE_ENDIAN
-    __def__ = """
-        struct {
-            /* All start like this */
-            jint16_t magic;
-            jint16_t nodetype;
-            jint32_t totlen; /* So we can skip over nodes we don't grok */
-            jint32_t hdr_crc;
-        }
-    """
-
-    def unpack(self, data):
-        cstruct.CStruct.unpack(self, data[: self.size])
-        comp_hrd_crc = mtd_crc(data[: self.size - 4])
-
-        if comp_hrd_crc == self.hdr_crc:
-            self.hdr_crc_match = True
-        else:
-            # print("hdr_crc does not match!")
-            self.hdr_crc_match = False
-
-
-class Jffs2_raw_dirent(cstruct.CStruct):
-    __byte_order__ = cstruct.LITTLE_ENDIAN
-    __def__ = """
-        struct {
-            jint16_t magic;
-            jint16_t nodetype;      /* == JFFS2_NODETYPE_DIRENT */
-            jint32_t totlen;
-            jint32_t hdr_crc;
-            jint32_t pino;
-            jint32_t version;
-            jint32_t ino; /* == zero for unlink */
-            jint32_t mctime;
-            uint8_t nsize;
-            uint8_t type;
-            uint8_t unused[2];
-            jint32_t node_crc;
-            jint32_t name_crc;
-        /* uint8_t data[0]; -> name */
-        }
-    """
-
-    def unpack(self, data, node_offset):
-        cstruct.CStruct.unpack(self, data[: self.size])
-        self.name = data[self.size : self.size + self.nsize].tobytes()
-        self.node_offset = node_offset
-
-        if mtd_crc(data[: self.size - 8]) == self.node_crc:
-            self.node_crc_match = True
-        else:
-            print("node_crc does not match!")
-            self.node_crc_match = False
-
-        if mtd_crc(self.name) == self.name_crc:
-            self.name_crc_match = True
-        else:
-            print("data_crc does not match!")
-            self.name_crc_match = False
-
-    def __str__(self):
-        result = []
-        for field in self.__fields__ + ["name", "node_offset"]:
-            result.append(field + "=" + str(getattr(self, field, None)))
-        return type(self).__name__ + "(" + ", ".join(result) + ")"
-
-
-class Jffs2_raw_inode(cstruct.CStruct):
-    __byte_order__ = cstruct.LITTLE_ENDIAN
-    __def__ = """
-        struct {
-            jint16_t magic;      /* A constant magic number.  */
-            jint16_t nodetype;   /* == JFFS2_NODETYPE_INODE */
-            jint32_t totlen;     /* Total length of this node (inc data, etc.) */
-            jint32_t hdr_crc;
-            jint32_t ino;        /* Inode number.  */
-            jint32_t version;    /* Version number.  */
-            jmode_t mode;       /* The file's type or mode.  */
-            jint16_t uid;        /* The file's owner.  */
-            jint16_t gid;        /* The file's group.  */
-            jint32_t isize;      /* Total resultant size of this inode (used for truncations)  */
-            jint32_t atime;      /* Last access time.  */
-            jint32_t mtime;      /* Last modification time.  */
-            jint32_t ctime;      /* Change time.  */
-            jint32_t offset;     /* Where to begin to write.  */
-            jint32_t csize;      /* (Compressed) data size */
-            jint32_t dsize;      /* Size of the node's data. (after decompression) */
-            uint8_t compr;       /* Compression algorithm used */
-            uint8_t usercompr;   /* Compression algorithm requested by the user */
-            jint16_t flags;      /* See JFFS2_INO_FLAG_* */
-            jint32_t data_crc;   /* CRC for the (compressed) data.  */
-            jint32_t node_crc;   /* CRC for the raw inode (excluding data)  */
-            /* uint8_t data[0]; */
-        }
-    """
-
-    def unpack(self, data):
-        cstruct.CStruct.unpack(self, data[: self.size])
-
-        node_data = data[self.size : self.size + self.csize].tobytes()
-        try:
-            if self.compr == JFFS2_COMPR_NONE:
-                self.data = node_data
-            elif self.compr == JFFS2_COMPR_ZERO:
-                self.data = b"\x00" * self.dsize
-            elif self.compr == JFFS2_COMPR_ZLIB:
-                self.data = zlib.decompress(node_data)
-            elif self.compr == JFFS2_COMPR_RTIME:
-                self.data = rtime.decompress(node_data, self.dsize)
-            elif self.compr == JFFS2_COMPR_LZMA:
-                self.data = jffs2_lzma.decompress(node_data, self.dsize)
-            elif self.compr == JFFS2_COMPR_LZO:
-                self.data = lzo.decompress(node_data)
-            elif self.compr == JFFS2_COMPR_LZMA_NO_SIZE:
-                self.data = jffs2_lzma_nosize.decompress(node_data, self.dsize)
-            else:
-                print("compression not implemented", self)
-                print(node_data.hex()[:20])
-                self.data = node_data
-        except Exception as e:
-            print(
-                "Decompression error on inode {}: {}".format(self.ino, e),
-                file=sys.stderr,
-            )
-            self.data = b"\x00" * self.dsize
-
-        if len(self.data) != self.dsize:
-            print("data length mismatch!")
-
-        if mtd_crc(data[: self.size - 8]) == self.node_crc:
-            self.node_crc_match = True
-        else:
-            print("hdr_crc does not match!")
-            self.node_crc_match = False
-
-        if mtd_crc(node_data) == self.data_crc:
-            self.data_crc_match = True
-        else:
-            print("data_crc does not match!")
-            self.data_crc_match = False
-
-
-class Jffs2_device_node_old(cstruct.CStruct):
-    __byte_order__ = cstruct.LITTLE_ENDIAN
-    __def__ = """
-        struct {
-            jint16_t old_id;
-        }
-    """
-
-
-class Jffs2_device_node_new(cstruct.CStruct):
-    __byte_order__ = cstruct.LITTLE_ENDIAN
-    __def__ = """
-        struct {
-            jint32_t new_id;
-        }
-    """
-
-
-NODETYPES = {
-    JFFS2_FEATURE_INCOMPAT: Jffs2_unknown_node,
-    JFFS2_NODETYPE_DIRENT: Jffs2_raw_dirent,
-    JFFS2_NODETYPE_INODE: Jffs2_raw_inode,
-    JFFS2_NODETYPE_CLEANMARKER: "JFFS2_NODETYPE_CLEANMARKER",
-    JFFS2_NODETYPE_PADDING: "JFFS2_NODETYPE_PADDING",
-}
+NODETYPES = {}
 
 
 def set_endianness(endianness):
-    global Jffs2_device_node_new, Jffs2_device_node_old, Jffs2_unknown_node, Jffs2_raw_dirent, Jffs2_raw_inode, Jffs2_raw_summary, Jffs2_raw_xattr, Jffs2_raw_xref
+    global Jffs2_device_node_new, Jffs2_device_node_old, Jffs2_unknown_node, Jffs2_raw_dirent, Jffs2_raw_inode, parse_device_node_new, parse_device_node_old, NODETYPES
 
-    Jffs2_device_node_new = Jffs2_device_node_new.parse(
-        Jffs2_device_node_new.__def__,
-        __name__=Jffs2_device_node_new.__name__,
-        __byte_order__=endianness,
-    )
+    parser = cstruct.cstruct(endian=endianness)
+    parser.load(CSTRUCT_DEFINITIONS)
 
-    Jffs2_device_node_old = Jffs2_device_node_old.parse(
-        Jffs2_device_node_old.__def__,
-        __name__=Jffs2_device_node_old.__name__,
-        __byte_order__=endianness,
-    )
+    Jffs2_device_node_new = parser.Jffs2_device_node_new
+    Jffs2_device_node_old = parser.Jffs2_device_node_old
+    Jffs2_unknown_node = parser.Jffs2_unknown_node
+    Jffs2_raw_dirent = parser.Jffs2_raw_dirent
+    Jffs2_raw_inode = parser.Jffs2_raw_inode
 
-    Jffs2_unknown_node = Jffs2_unknown_node.parse(
-        Jffs2_unknown_node.__def__,
-        __name__=Jffs2_unknown_node.__name__,
-        __byte_order__=endianness,
-    )
+    parse_device_node_new = Jffs2_device_node_new
+    parse_device_node_old = Jffs2_device_node_old
 
-    Jffs2_raw_dirent = Jffs2_raw_dirent.parse(
-        Jffs2_raw_dirent.__def__,
-        __name__=Jffs2_raw_dirent.__name__,
-        __byte_order__=endianness,
-    )
+    NODETYPES = {
+        JFFS2_FEATURE_INCOMPAT: Jffs2_unknown_node,
+        JFFS2_NODETYPE_DIRENT: Jffs2_raw_dirent,
+        JFFS2_NODETYPE_INODE: Jffs2_raw_inode,
+        JFFS2_NODETYPE_CLEANMARKER: "JFFS2_NODETYPE_CLEANMARKER",
+        JFFS2_NODETYPE_PADDING: "JFFS2_NODETYPE_PADDING",
+    }
 
-    Jffs2_raw_inode = Jffs2_raw_inode.parse(
-        Jffs2_raw_inode.__def__,
-        __name__=Jffs2_raw_inode.__name__,
-        __byte_order__=endianness,
-    )
+
+set_endianness("<")
+
+
+def parse_unknown_node(data):
+    node = Jffs2_unknown_node(data)
+    node.hdr_crc_match = mtd_crc(data[: Jffs2_unknown_node.size - 4]) == node.hdr_crc
+    return node
+
+
+def parse_dirent(data, node_offset):
+    dirent = Jffs2_raw_dirent(data)
+    dirent.name = data[Jffs2_raw_dirent.size : Jffs2_raw_dirent.size + dirent.nsize]
+    dirent.node_offset = node_offset
+
+    if mtd_crc(data[: Jffs2_raw_dirent.size - 8]) == dirent.node_crc:
+        dirent.node_crc_match = True
+    else:
+        print("node_crc does not match!")
+        dirent.node_crc_match = False
+
+    if mtd_crc(dirent.name) == dirent.name_crc:
+        dirent.name_crc_match = True
+    else:
+        print("data_crc does not match!")
+        dirent.name_crc_match = False
+    return dirent
+
+
+def parse_inode(data):
+    inode = Jffs2_raw_inode(data)
+
+    node_data = data[Jffs2_raw_inode.size : Jffs2_raw_inode.size + inode.csize]
+    try:
+        if inode.compr == JFFS2_COMPR_NONE:
+            inode.data = node_data
+        elif inode.compr == JFFS2_COMPR_ZERO:
+            inode.data = b"\x00" * inode.dsize
+        elif inode.compr == JFFS2_COMPR_ZLIB:
+            inode.data = zlib.decompress(node_data)
+        elif inode.compr == JFFS2_COMPR_RTIME:
+            inode.data = rtime.decompress(node_data, inode.dsize)
+        elif inode.compr == JFFS2_COMPR_LZMA:
+            inode.data = jffs2_lzma.decompress(node_data, inode.dsize)
+        elif inode.compr == JFFS2_COMPR_LZO:
+            inode.data = lzo.decompress(node_data)
+        elif inode.compr == JFFS2_COMPR_LZMA_NO_SIZE:
+            inode.data = jffs2_lzma_nosize.decompress(node_data, inode.dsize)
+        else:
+            print("compression not implemented", inode)
+            print(node_data.hex()[:20])
+            inode.data = node_data
+    except Exception as e:
+        print(
+            "Decompression error on inode {}: {}".format(inode.ino, e), file=sys.stderr
+        )
+        inode.data = b"\x00" * inode.dsize
+
+    if len(inode.data) != inode.dsize:
+        print("data length mismatch!")
+
+    if mtd_crc(data[: Jffs2_raw_inode.size - 8]) == inode.node_crc:
+        inode.node_crc_match = True
+    else:
+        print("hdr_crc does not match!")
+        inode.node_crc_match = False
+
+    if mtd_crc(node_data) == inode.data_crc:
+        inode.data_crc_match = True
+    else:
+        print("data_crc does not match!")
+        inode.data_crc_match = False
+    return inode
 
 
 def scan_fs(content, endianness, verbose=False):
     pos = 0
     jffs2_old_magic_bitmask_str = struct.pack(endianness + "H", JFFS2_OLD_MAGIC_BITMASK)
     jffs2_magic_bitmask_str = struct.pack(endianness + "H", JFFS2_MAGIC_BITMASK)
-    content_mv = memoryview(content)
 
     fs = {}
     fs[JFFS2_NODETYPE_INODE] = {}
@@ -297,8 +244,7 @@ def scan_fs(content, endianness, verbose=False):
         else:
             pos = find_result_old
 
-        unknown_node = Jffs2_unknown_node()
-        unknown_node.unpack(content_mv[pos : pos + unknown_node.size])
+        unknown_node = parse_unknown_node(content[pos : pos + Jffs2_unknown_node.size])
         if not unknown_node.hdr_crc_match:
             pos += 1
             continue
@@ -311,8 +257,9 @@ def scan_fs(content, endianness, verbose=False):
         ]:
             if unknown_node.nodetype in NODETYPES:
                 if unknown_node.nodetype == JFFS2_NODETYPE_DIRENT:
-                    dirent = Jffs2_raw_dirent()
-                    dirent.unpack(content_mv[0 + offset :], offset)
+                    dirent = parse_dirent(
+                        content[offset : offset + unknown_node.totlen], offset
+                    )
                     if dirent.ino in fs[JFFS2_NODETYPE_DIRENT]:
                         if (
                             dirent.version
@@ -324,8 +271,7 @@ def scan_fs(content, endianness, verbose=False):
                     if verbose:
                         print("0x%08X:" % (offset), dirent)
                 elif unknown_node.nodetype == JFFS2_NODETYPE_INODE:
-                    inode = Jffs2_raw_inode()
-                    inode.unpack(content_mv[0 + offset :])
+                    inode = parse_inode(content[offset : offset + unknown_node.totlen])
 
                     if inode.ino in fs[JFFS2_NODETYPE_INODE]:
                         fs[JFFS2_NODETYPE_INODE][inode.ino].append(inode)
@@ -345,7 +291,6 @@ def scan_fs(content, endianness, verbose=False):
                     pass
                 else:
                     print("Unknown node type", unknown_node.nodetype, unknown_node)
-    content_mv.release()
     return fs
 
 
@@ -353,17 +298,15 @@ def get_device(inode):
     if not stat.S_ISBLK(inode.mode) and not stat.S_ISCHR(inode.mode):
         return None
 
-    if inode.dsize == len(Jffs2_device_node_new):
-        node = Jffs2_device_node_new()
-        node.unpack(inode.data)
+    if inode.dsize == Jffs2_device_node_new.size:
+        node = parse_device_node_new(inode.data)
         return os.makedev(
             (node.new_id & 0xFFF00) >> 8,
             (node.new_id & 0xFF) | ((node.new_id >> 12) & 0xFFF00),
         )
 
-    if inode.dsize == len(Jffs2_device_node_old):
-        node = Jffs2_device_node_old()
-        node.unpack(inode.data)
+    if inode.dsize == Jffs2_device_node_old.size:
+        node = parse_device_node_old(inode.data)
         return os.makedev((node.old_id >> 8) & 0xFF, node.old_id & 0xFF)
     return None
 
@@ -457,9 +400,9 @@ def extract_jffs2(file: Path, destination: Path, verbose: int) -> int:
         )
         magic = struct.unpack("<H", content[0:2])[0]
         if magic in [JFFS2_OLD_MAGIC_BITMASK, JFFS2_MAGIC_BITMASK]:
-            endianness = cstruct.LITTLE_ENDIAN
+            endianness = "<"
         else:
-            endianness = cstruct.BIG_ENDIAN
+            endianness = ">"
 
         set_endianness(endianness)
 
