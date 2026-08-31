@@ -3,6 +3,9 @@ name: Publish Python distribution to PyPI
 on:
   push:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build distribution
