@@ -1,27 +1,92 @@
-name: PyPI Release
+name: Publish Python distribution to PyPI
 
 on:
-  release:
-    types: [created]
+  push:
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
 
     steps:
+      - name: Check out source code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
 
-      - name: Pip install
-        run: python -m pip install --upgrade pip poetry
-        shell: bash
+      - name: Install pypa/build
+        run: python -m pip install build --user
 
-      - name: Checkout source code
-        uses: actions/checkout@v4
+      - name: Build distribution packages
+        run: python -m build
 
-      - run: poetry publish --build
+      - name: Store distribution packages
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  validate-release-tag:
+    name: Validate release tag
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require semantic version tag
         env:
-          POETRY_PYPI_TOKEN_PYPI: ${{secrets.POETRY_PYPI_TOKEN_PYPI}}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must match vMAJOR.MINOR.PATCH (for example, v0.4.7)."
+            exit 1
+          fi
+
+  publish:
+    name: Publish distribution to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build
+      - validate-release-tag
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/jefferson/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-to-testpypi:
+    name: Publish distribution to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/jefferson/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distribution to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
