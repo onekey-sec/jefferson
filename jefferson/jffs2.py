@@ -248,6 +248,9 @@ def scan_fs(content, endianness, verbose=False):
         if not unknown_node.hdr_crc_match:
             pos += 1
             continue
+        if unknown_node.totlen < Jffs2_unknown_node.size:
+            pos += 1
+            continue
         offset = pos
         pos += PAD(unknown_node.totlen)
 
