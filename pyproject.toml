@@ -8,7 +8,7 @@ authors = [
 dependencies = [
   "click>=8.1.3,<9",
   "dissect-cstruct>=4.4,<5",
-  "lzallright>=0.2.1,<0.3",
+  "lzallright>=0.3,<0.4",
 ]
 description = "JFFS2 filesystem extraction tool."
 license = "MIT"
