@@ -40,7 +40,7 @@ module-root = ""
 
 [build-system]
 build-backend = "uv_build"
-requires = ["uv_build>=0.12.17,<0.13"]
+requires = ["uv_build>=0.13.1,<0.14"]
 
 [tool.pytest.ini_options]
 addopts = "--cov"
