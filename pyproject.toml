@@ -24,7 +24,7 @@ jefferson = "jefferson.cli:main"
 [dependency-groups]
 check = [
   "pre-commit>=3.5,<5.0",
-  "ruff==0.16.10",
+  "ruff==0.17.1",
   "taplo>=0.9.3",
 ]
 dev = [
